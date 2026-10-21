@@ -20,7 +20,7 @@ jobs:
       with:
         gradle-version: 8.10.2
         
-    - name: Fix Code and Build APK
+    - name: Clean Rebuild and Fix Everything
       run: |
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
         cd "$DIR"
@@ -29,21 +29,248 @@ jobs:
         echo "android.enableJetifier=false" >> gradle.properties
         echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
         
-        sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
-        sed -i 's/implementation("org.tensorflow:tensorflow-lite:2.14.0")/implementation("org.tensorflow:tensorflow-lite:2.14.0")\n    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")/g' app/build.gradle.kts
+        # 1. We wipe out Gemini's broken UI and files
+        rm -rf app/src/main/java/com/efootball/visionassist
         
-        # 1. Data Models
+        # 2. Build.gradle.kts clean
+        cat << 'EOF' > app/build.gradle.kts
+        plugins {
+            id("com.android.application")
+            id("org.jetbrains.kotlin.android")
+        }
+        android {
+            namespace = "com.efootball.visionassist"
+            compileSdk = 34
+            defaultConfig {
+                applicationId = "com.efootball.visionassist"
+                minSdk = 26
+                targetSdk = 34
+                versionCode = 1
+                versionName = "1.0"
+            }
+            buildFeatures { compose = true }
+            composeOptions { kotlinCompilerExtensionVersion = "1.5.1" }
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            kotlinOptions { jvmTarget = "17" }
+        }
+        dependencies {
+            implementation("androidx.core:core-ktx:1.12.0")
+            implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+            implementation("androidx.activity:activity-compose:1.8.2")
+            implementation(platform("androidx.compose:compose-bom:2023.08.00"))
+            implementation("androidx.compose.ui:ui")
+            implementation("androidx.compose.ui:ui-graphics")
+            implementation("androidx.compose.ui:ui-tooling-preview")
+            implementation("androidx.compose.material3:material3")
+            implementation("org.tensorflow:tensorflow-lite:2.14.0")
+            implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+            implementation("com.squareup.okhttp3:okhttp:4.12.0")
+        }
+        EOF
+
+        # 3. Manifest Clean
+        cat << 'EOF' > app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+            <application
+                android:allowBackup="true"
+                android:icon="@drawable/ic_vision_hud"
+                android:label="eFootball Vision"
+                android:theme="@style/Theme.Material.NoActionBar">
+                <activity
+                    android:name=".MainActivity"
+                    android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+                <service android:name=".service.CaptureService" android:foregroundServiceType="mediaProjection" />
+                <service android:name=".service.OverlayService" />
+            </application>
+        </manifest>
+        EOF
+
+        # 4. MainActivity (Clean Compose UI)
+        mkdir -p app/src/main/java/com/efootball/visionassist/service
+        mkdir -p app/src/main/java/com/efootball/visionassist/overlay
+        mkdir -p app/src/main/java/com/efootball/visionassist/vision
         mkdir -p app/src/main/java/com/efootball/visionassist/data
+        mkdir -p app/src/main/java/com/efootball/visionassist/engine
+        
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/MainActivity.kt
+        package com.efootball.visionassist
+        import android.content.Intent
+        import android.media.projection.MediaProjectionManager
+        import android.net.Uri
+        import android.os.Bundle
+        import android.provider.Settings
+        import androidx.activity.ComponentActivity
+        import androidx.activity.compose.setContent
+        import androidx.activity.result.contract.ActivityResultContracts
+        import androidx.compose.foundation.background
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.graphics.Color
+        import androidx.compose.ui.unit.dp
+        import com.efootball.visionassist.service.CaptureService
+        import com.efootball.visionassist.service.OverlayService
+
+        class MainActivity : ComponentActivity() {
+            private var hasOverlay by mutableStateOf(false)
+            private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                if (result.resultCode == RESULT_OK && result.data != null) {
+                    val intent = Intent(this, CaptureService::class.java)
+                    intent.putExtra("resultCode", result.resultCode)
+                    intent.putExtra("data", result.data)
+                    startForegroundService(intent)
+                }
+            }
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContent {
+                    MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF10B981), background = Color(0xFF020617))) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().background(Color(0xFF020617)).padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text("eFootball Vision Assist", color = Color(0xFF34D399), style = MaterialTheme.typography.headlineMedium)
+                            Spacer(modifier = Modifier.height(32.dp))
+                            Button(onClick = {
+                                if (!Settings.canDrawOverlays(this@MainActivity)) {
+                                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                                } else {
+                                    hasOverlay = true
+                                    startService(Intent(this@MainActivity, OverlayService::class.java))
+                                }
+                            }) {
+                                Text(if(hasOverlay) "Overlay Granted" else "1. Grant Overlay")
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(onClick = {
+                                val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                projectionLauncher.launch(manager.createScreenCaptureIntent())
+                            }) {
+                                Text("2. Start Capture & Assist")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        EOF
+
+        # 5. Services
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/service/OverlayService.kt
+        package com.efootball.visionassist.service
+        import android.app.Service
+        import android.content.Intent
+        import android.graphics.PixelFormat
+        import android.os.IBinder
+        import android.view.Gravity
+        import android.view.WindowManager
+        import com.efootball.visionassist.overlay.PitchOverlayView
+
+        class OverlayService : Service() {
+            private lateinit var windowManager: WindowManager
+            private var overlayView: PitchOverlayView? = null
+            override fun onCreate() {
+                super.onCreate()
+                windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+                overlayView = PitchOverlayView(this)
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                )
+                params.gravity = Gravity.TOP or Gravity.START
+                windowManager.addView(overlayView, params)
+            }
+            override fun onDestroy() { super.onDestroy(); overlayView?.let { windowManager.removeView(it) } }
+            override fun onBind(intent: Intent?): IBinder? = null
+        }
+        EOF
+
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/service/CaptureService.kt
+        package com.efootball.visionassist.service
+        import android.app.*
+        import android.content.Intent
+        import android.graphics.Bitmap
+        import android.graphics.PixelFormat
+        import android.hardware.display.DisplayManager
+        import android.hardware.display.VirtualDisplay
+        import android.media.ImageReader
+        import android.media.projection.MediaProjection
+        import android.media.projection.MediaProjectionManager
+        import android.os.Build
+        import android.os.IBinder
+        import android.util.DisplayMetrics
+        import android.view.WindowManager
+        import androidx.core.app.NotificationCompat
+        import com.efootball.visionassist.R
+        import com.efootball.visionassist.vision.VisionPipeline
+
+        class CaptureService : Service() {
+            private var mediaProjection: MediaProjection? = null
+            private var virtualDisplay: VirtualDisplay? = null
+            private var imageReader: ImageReader? = null
+            override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel("v_channel", "Vision", NotificationManager.IMPORTANCE_LOW)
+                    (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+                }
+                startForeground(1, NotificationCompat.Builder(this, "v_channel").setContentTitle("Vision Running").setSmallIcon(R.drawable.ic_vision_hud).build())
+                val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
+                val data = intent?.getParcelableExtra<Intent>("data")
+                if (data != null && mediaProjection == null) {
+                    val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    mediaProjection = manager.getMediaProjection(resultCode, data)
+                    setupVirtualDisplay()
+                    VisionPipeline.init(this)
+                }
+                return START_STICKY
+            }
+            private fun setupVirtualDisplay() {
+                val metrics = DisplayMetrics()
+                val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+                wm.defaultDisplay.getRealMetrics(metrics)
+                val width = metrics.widthPixels; val height = metrics.heightPixels; val density = metrics.densityDpi
+                imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
+                virtualDisplay = mediaProjection?.createVirtualDisplay("ScreenCapture", width, height, density, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader?.surface, null, null)
+                imageReader?.setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    val planes = image.planes; val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride; val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * width
+                    val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                    bitmap.copyPixelsFromBuffer(buffer)
+                    VisionPipeline.processFrame(Bitmap.createBitmap(bitmap, 0, 0, width, height))
+                    image.close()
+                }, null, null)
+            }
+            override fun onDestroy() { super.onDestroy(); virtualDisplay?.release(); imageReader?.close(); mediaProjection?.stop() }
+            override fun onBind(intent: Intent?): IBinder? = null
+        }
+        EOF
+
+        # 6. Data & Engine
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/data/Models.kt
         package com.efootball.visionassist.data
         data class ScreenPoint(val x: Float, val y: Float)
-        data class PitchPoint(val x: Float, val y: Float) {
-            fun distanceTo(other: PitchPoint): Float {
-                val dx = x - other.x
-                val dy = y - other.y
-                return kotlin.math.sqrt(dx * dx + dy * dy)
-            }
-        }
+        data class PitchPoint(val x: Float, val y: Float) { fun distanceTo(o: PitchPoint): Float = kotlin.math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y)) }
         enum class PlayerRole { TEAMMATE, OPPONENT }
         data class DetectedBall(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint = PitchPoint(0f, 0f))
         data class DetectedPlayer(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint = PitchPoint(0f, 0f), val role: PlayerRole = PlayerRole.TEAMMATE, val number: Int = 0)
@@ -51,9 +278,7 @@ jobs:
         data class OverlayState(val ball: DetectedBall? = null, val players: List<DetectedPlayer> = emptyList(), val bestPass: PassOption? = null)
         data class AssistSettings(val showOpponents: Boolean = true, val showRadar: Boolean = true, val showPassLines: Boolean = true, val lineThickness: Float = 4f)
         EOF
-        
-        # 2. Clean Pass Engine
-        mkdir -p app/src/main/java/com/efootball/visionassist/engine
+
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/engine/PassEngine.kt
         package com.efootball.visionassist.engine
         import com.efootball.visionassist.data.*
@@ -62,138 +287,106 @@ jobs:
                 if (teammates.isEmpty()) return emptyList()
                 return teammates.mapIndexed { index, mate ->
                     val laneClearance = opponents.minOfOrNull { opp -> mate.pitchPosition.distanceTo(opp.pitchPosition) } ?: 50f
-                    val forwardProgress = mate.pitchPosition.x - ball.pitchPosition.x
-                    val risk = 1f / (laneClearance + 0.1f)
-                    val score = (laneClearance * 0.55f) + (forwardProgress * 0.30f) - (risk * 0.40f)
-                    PassOption(target = mate, score = score, laneClearance = laneClearance, forwardProgress = forwardProgress, interceptionRisk = risk, rank = index + 1)
+                    val score = (laneClearance * 0.55f) + ((mate.pitchPosition.x - ball.pitchPosition.x) * 0.30f)
+                    PassOption(target = mate, score = score, laneClearance = laneClearance, rank = index + 1)
                 }.sortedByDescending { it.score }
             }
         }
         EOF
 
-        # 3. Vision Pipeline
-        mkdir -p app/src/main/java/com/efootball/visionassist/vision
+        # 7. Real Vision Pipeline & Yolo
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/YoloDetector.kt
+        package com.efootball.visionassist.vision
+        import android.content.Context
+        import android.graphics.Bitmap
+        import org.tensorflow.lite.Interpreter
+        import java.io.FileInputStream
+        import java.nio.ByteBuffer
+        import java.nio.ByteOrder
+        import java.nio.channels.FileChannel
+        import com.efootball.visionassist.data.*
+        class YoloDetector(context: Context) {
+            private var interpreter: Interpreter? = null
+            private val modelPath = "${context.filesDir.absolutePath}/yolov8n.tflite"
+            fun init() {
+                try {
+                    val file = java.io.File(modelPath); if (!file.exists()) return
+                    interpreter = Interpreter(FileInputStream(file).channel.map(FileChannel.MapMode.READ_ONLY, 0, file.length()), Interpreter.Options().apply { setNumThreads(4) })
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            fun detect(bitmap: Bitmap): Pair<DetectedBall?, List<DetectedPlayer>> {
+                val itp = interpreter ?: return Pair(null, emptyList())
+                val input = ByteBuffer.allocateDirect(1 * 640 * 640 * 3 * 4).order(ByteOrder.nativeOrder())
+                val pixels = IntArray(640 * 640)
+                Bitmap.createScaledBitmap(bitmap, 640, 640, true).getPixels(pixels, 0, 640, 0, 0, 640, 640)
+                for (p in pixels) { input.putFloat(((p shr 16 and 0xFF) / 255.0f)); input.putFloat(((p shr 8 and 0xFF) / 255.0f)); input.putFloat(((p and 0xFF) / 255.0f)) }
+                val output = Array(1) { Array(84) { FloatArray(8400) } }
+                itp.run(input, output)
+                var ball: DetectedBall? = null; val players = mutableListOf<DetectedPlayer>(); val out = output[0]
+                for (i in 0 until 8400) {
+                    val x = out[0][i] * 640f; val y = out[1][i] * 640f; val sP = out[4][i]; val sB = out[32][i]
+                    val sx = bitmap.width / 640f; val sy = bitmap.height / 640f
+                    if (sB > 0.4f && ball == null) ball = DetectedBall(ScreenPoint(x * sx, y * sy), PitchPoint(x, y))
+                    else if (sP > 0.4f && players.size < 22) players.add(DetectedPlayer(ScreenPoint(x * sx, y * sy), PitchPoint(x, y), PlayerRole.TEAMMATE, players.size))
+                }
+                return Pair(ball, players)
+            }
+        }
+        EOF
+
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/VisionPipeline.kt
         package com.efootball.visionassist.vision
+        import android.content.Context
+        import android.graphics.Bitmap
         import com.efootball.visionassist.data.*
+        import com.efootball.visionassist.engine.PassEngine
         import kotlinx.coroutines.flow.MutableStateFlow
         object VisionPipeline {
             val overlayState = MutableStateFlow(OverlayState())
-            val settings = MutableStateFlow(AssistSettings())
-            fun getPitchDetector(): PitchDetector = PitchDetector()
-            fun processFrame(bitmap: android.graphics.Bitmap) {}
-            fun release() {}
+            private var yolo: YoloDetector? = null
+            fun init(context: Context) {
+                yolo = YoloDetector(context); yolo?.init()
+                val file = java.io.File("${context.filesDir.absolutePath}/yolov8n.tflite")
+                if (!file.exists()) kotlin.concurrent.thread {
+                    try { java.net.URL("https://huggingface.co/Ultralytics/YOLOv8/resolve/main/yolov8n.tflite").openStream().use { input -> file.outputStream().use { input.copyTo(it) } }; yolo?.init() } catch (e: Exception) {}
+                }
+            }
+            fun processFrame(bitmap: Bitmap) {
+                val (ball, players) = yolo?.detect(bitmap) ?: return
+                if (ball != null && players.isNotEmpty()) {
+                    val best = PassEngine.rankPasses(ball, players, emptyList()).firstOrNull()
+                    overlayState.value = OverlayState(ball, players, best)
+                } else overlayState.value = OverlayState(ball, players)
+            }
         }
         EOF
 
-        # 4. Clean Pitch Overlay View (Fixes the UI drawing errors)
-        mkdir -p app/src/main/java/com/efootball/visionassist/overlay
+        # 8. Overlay View (Draws Lines)
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/overlay/PitchOverlayView.kt
         package com.efootball.visionassist.overlay
         import android.content.Context
-        import android.graphics.Canvas
-        import android.graphics.Color
-        import android.graphics.Paint
+        import android.graphics.*
         import android.view.View
-        import com.efootball.visionassist.data.OverlayState
-        import com.efootball.visionassist.data.AssistSettings
-        import com.efootball.visionassist.data.PlayerRole
+        import com.efootball.visionassist.vision.VisionPipeline
         class PitchOverlayView(context: Context) : View(context) {
-            var overlayState: OverlayState = OverlayState()
-            var settings: AssistSettings = AssistSettings()
             private val ballPaint = Paint().apply { color = Color.CYAN; style = Paint.Style.FILL }
-            private val teammatePaint = Paint().apply { color = Color.BLUE; style = Paint.Style.FILL }
-            private val opponentPaint = Paint().apply { color = Color.RED; style = Paint.Style.FILL }
-            private val passPaint = Paint().apply { color = Color.GREEN; strokeWidth = 8f; style = Paint.Style.STROKE }
+            private val teamPaint = Paint().apply { color = Color.BLUE; style = Paint.Style.STROKE; strokeWidth = 6f }
+            private val passPaint = Paint().apply { color = Color.GREEN; strokeWidth = 10f; style = Paint.Style.STROKE }
+            private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+            private val runnable = object : Runnable { override fun run() { invalidate(); handler.postDelayed(this, 16) } }
+            init { handler.post(runnable) }
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
-                val ball = overlayState.ball
-                if (ball != null) canvas.drawCircle(ball.screenPosition.x, ball.screenPosition.y, 20f, ballPaint)
-                for (player in overlayState.players) {
-                    if (player.role == PlayerRole.TEAMMATE) canvas.drawCircle(player.screenPosition.x, player.screenPosition.y, 30f, teammatePaint)
-                    else if (settings.showOpponents) canvas.drawCircle(player.screenPosition.x, player.screenPosition.y, 30f, opponentPaint)
-                }
-                val bestPass = overlayState.bestPass
-                if (bestPass != null && settings.showPassLines && ball != null) {
-                    canvas.drawLine(ball.screenPosition.x, ball.screenPosition.y, bestPass.target.screenPosition.x, bestPass.target.screenPosition.y, passPaint)
-                }
+                val state = VisionPipeline.overlayState.value
+                state.ball?.let { canvas.drawCircle(it.screenPosition.x, it.screenPosition.y, 20f, ballPaint) }
+                for (p in state.players) canvas.drawCircle(p.screenPosition.x, p.screenPosition.y, 40f, teamPaint)
+                state.bestPass?.let { best -> state.ball?.let { b -> canvas.drawLine(b.screenPosition.x, b.screenPosition.y, best.target.screenPosition.x, best.target.screenPosition.y, passPaint) } }
             }
         }
         EOF
 
-        # 5. Clean Capture Service (Fixes the Coroutine error)
-        mkdir -p app/src/main/java/com/efootball/visionassist/service
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/service/CaptureService.kt
-        package com.efootball.visionassist.service
-        import android.app.Service
-        import android.content.Intent
-        import android.os.IBinder
-        import android.util.Log
-        import kotlinx.coroutines.CoroutineScope
-        import kotlinx.coroutines.Dispatchers
-        import kotlinx.coroutines.launch
-        import com.efootball.visionassist.vision.VisionPipeline
-        class CaptureService : Service() {
-            override fun onBind(intent: Intent?): IBinder? = null
-            override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-                CoroutineScope(Dispatchers.Default).launch {
-                    try {} catch (e: Exception) { Log.e("CaptureService", "Error", e) }
-                }
-                return START_STICKY
-            }
-            override fun onDestroy() { super.onDestroy(); VisionPipeline.release() }
-        }
-        EOF
-
-        # 6. Clean YoloDetector Stub (Fixes TFLite GPU error)
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/YoloDetector.kt
-        package com.efootball.visionassist.vision
-        class YoloDetector {
-            fun detect(bitmap: android.graphics.Bitmap): List<Any> { return emptyList() }
-        }
-        EOF
-
-        # 7. UI Theme
-        mkdir -p app/src/main/java/com/efootball/visionassist/ui/theme
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/ui/theme/Color.kt
-        package com.efootball.visionassist.ui.theme
-        import androidx.compose.ui.graphics.Color
-        val Slate950 = Color(0xFF020617)
-        val Slate900 = Color(0xFF0F172A)
-        val Slate800 = Color(0xFF1E293B)
-        val Slate400 = Color(0xFF94A3B8)
-        val Slate300 = Color(0xFFCBD5E1)
-        val Emerald500 = Color(0xFF10B981)
-        val Emerald400 = Color(0xFF34D399)
-        val Cyan500 = Color(0xFF06B6D4)
-        val Cyan400 = Color(0xFF22D3EE)
-        val Purple500 = Color(0xFFA855F7)
-        val Red500 = Color(0xFFEF4444)
-        EOF
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/ui/theme/Theme.kt
-        package com.efootball.visionassist.ui.theme
-        import androidx.compose.material3.MaterialTheme
-        import androidx.compose.material3.darkColorScheme
-        import androidx.compose.runtime.Composable
-        private val DarkColorScheme = darkColorScheme(
-            primary = Emerald500, secondary = Purple500, tertiary = Cyan500,
-            background = Slate950, surface = Slate900,
-            onPrimary = Slate950, onSecondary = Slate950,
-            onBackground = Slate300, onSurface = Slate300
-        )
-        @Composable
-        fun EFootballVisionAssistTheme(content: @Composable () -> Unit) {
-            MaterialTheme(colorScheme = DarkColorScheme, content = content)
-        }
-        EOF
-
-        # 8. Resources
-        mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/res/values
-        echo '<?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><exclude domain="sharedpref" path="device.xml"/></cloud-backup></data-extraction-rules>' > app/src/main/res/xml/data_extraction_rules.xml
-        echo '<?xml version="1.0" encoding="utf-8"?><full-backup-content><exclude domain="sharedpref" path="device.xml"/></full-backup-content>' > app/src/main/res/xml/backup_rules.xml
+        # 9. Icons
         echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24.0" android:viewportHeight="24.0"><path android:fillColor="#FF000000" android:pathData="M12,4.5C7,4.5 2.73,7.61 1,12c1.73,4.39 6,7.5 11,7.5s9.27,-3.11 11,-7.5c-1.73,-4.39 -6,-7.5 -11,-7.5zM12,17c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5zM12,9c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3 -1.34,-3 -3,-3z"/></vector>' > app/src/main/res/drawable/ic_vision_hud.xml
-        echo '<resources><string name="app_name">eFootball Vision Assist</string></resources>' > app/src/main/res/values/strings.xml
-        echo '<resources><style name="Theme.EFootballVisionAssist" parent="android:Theme.Material.NoActionBar" /></resources>' > app/src/main/res/values/themes.xml
 
         gradle assembleDebug
         
