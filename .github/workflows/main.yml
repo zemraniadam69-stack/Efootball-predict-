@@ -31,6 +31,13 @@ jobs:
         
         # 1. We wipe out Gemini's broken UI and files
         rm -rf app/src/main/java/com/efootball/visionassist
+        mkdir -p app/src/main/java/com/efootball/visionassist/service
+        mkdir -p app/src/main/java/com/efootball/visionassist/overlay
+        mkdir -p app/src/main/java/com/efootball/visionassist/vision
+        mkdir -p app/src/main/java/com/efootball/visionassist/data
+        mkdir -p app/src/main/java/com/efootball/visionassist/engine
+        mkdir -p app/src/main/res/drawable
+        mkdir -p app/src/main/res/values
         
         # 2. Build.gradle.kts clean
         cat << 'EOF' > app/build.gradle.kts
@@ -72,7 +79,7 @@ jobs:
         }
         EOF
 
-        # 3. Manifest Clean
+        # 3. Manifest & Themes Clean
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -84,7 +91,7 @@ jobs:
                 android:allowBackup="true"
                 android:icon="@drawable/ic_vision_hud"
                 android:label="eFootball Vision"
-                android:theme="@style/Theme.Material.NoActionBar">
+                android:theme="@style/Theme.App">
                 <activity
                     android:name=".MainActivity"
                     android:exported="true">
@@ -99,13 +106,13 @@ jobs:
         </manifest>
         EOF
 
+        cat << 'EOF' > app/src/main/res/values/themes.xml
+        <resources>
+            <style name="Theme.App" parent="android:Theme.Material.NoActionBar" />
+        </resources>
+        EOF
+
         # 4. MainActivity (Clean Compose UI)
-        mkdir -p app/src/main/java/com/efootball/visionassist/service
-        mkdir -p app/src/main/java/com/efootball/visionassist/overlay
-        mkdir -p app/src/main/java/com/efootball/visionassist/vision
-        mkdir -p app/src/main/java/com/efootball/visionassist/data
-        mkdir -p app/src/main/java/com/efootball/visionassist/engine
-        
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/MainActivity.kt
         package com.efootball.visionassist
         import android.content.Intent
@@ -361,7 +368,7 @@ jobs:
         }
         EOF
 
-        # 8. Overlay View (Draws Lines)
+        # 8. Overlay View
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/overlay/PitchOverlayView.kt
         package com.efootball.visionassist.overlay
         import android.content.Context
