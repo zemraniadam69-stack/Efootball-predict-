@@ -25,15 +25,20 @@ jobs:
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
         cd "$DIR"
         
-        # نطفيو Jetifier حيتاش هو اللي كيخلي OpenCV ياكل الذاكرة
         echo "android.useAndroidX=true" >> gradle.properties
         echo "android.enableJetifier=false" >> gradle.properties
-        
-        # نعطيو ذاكرة كبيرة للبناء (4 جيجا)
         echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
         
-        # نصلحو الغلطة القديمة ديال Gemini
         sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
+        
+        # صاوب الملفات الناقصة اللي نساهم Gemini
+        mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/res/values
+        
+        echo '<?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><exclude domain="sharedpref" path="device.xml"/></cloud-backup></data-extraction-rules>' > app/src/main/res/xml/data_extraction_rules.xml
+        echo '<?xml version="1.0" encoding="utf-8"?><full-backup-content><exclude domain="sharedpref" path="device.xml"/></full-backup-content>' > app/src/main/res/xml/backup_rules.xml
+        echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24.0" android:viewportHeight="24.0"><path android:fillColor="#FF000000" android:pathData="M12,4.5C7,4.5 2.73,7.61 1,12c1.73,4.39 6,7.5 11,7.5s9.27,-3.11 11,-7.5c-1.73,-4.39 -6,-7.5 -11,-7.5zM12,17c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5zM12,9c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3 -1.34,-3 -3,-3z"/></vector>' > app/src/main/res/drawable/ic_vision_hud.xml
+        echo '<resources><string name="app_name">eFootball Assist</string></resources>' > app/src/main/res/values/strings.xml
+        echo '<resources><style name="Theme.EFootballVisionAssist" parent="android:Theme.Material.Light.NoActionBar" /></resources>' > app/src/main/res/values/themes.xml
         
         gradle assembleDebug
         
