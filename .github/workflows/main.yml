@@ -39,11 +39,12 @@ jobs:
         mkdir -p app/src/main/res/drawable
         mkdir -p app/src/main/res/values
         
-        # 2. Build.gradle.kts clean
+        # 2. Build.gradle.kts (Fixing Kotlin 2.0 Compose Plugin requirement)
         cat << 'EOF' > app/build.gradle.kts
         plugins {
             id("com.android.application")
             id("org.jetbrains.kotlin.android")
+            id("org.jetbrains.kotlin.plugin.compose")
         }
         android {
             namespace = "com.efootball.visionassist"
@@ -56,7 +57,6 @@ jobs:
                 versionName = "1.0"
             }
             buildFeatures { compose = true }
-            composeOptions { kotlinCompilerExtensionVersion = "1.5.1" }
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
@@ -79,7 +79,7 @@ jobs:
         }
         EOF
 
-        # 3. Manifest & Themes Clean
+        # 3. Manifest & Themes
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
