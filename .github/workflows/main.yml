@@ -14,31 +14,20 @@ jobs:
       with:
         distribution: 'temurin'
         java-version: '17'
+
+    - name: Setup Gradle 8.9
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: 8.9
         
     - name: Build Debug APK
       run: |
-        # كيقلب على المجلد اللي فيه settings.gradle
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
-        if [ -z "$DIR" ]; then
-          echo "Error: settings.gradle not found! Here is the file structure:"
-          ls -R app_source
-          exit 1
-        fi
-        echo "Project root found at: $DIR"
         cd "$DIR"
-        
-        # إلا لقى gradlew كيستعملو، إلا ما لقاهش كيستعمل النظام
-        if [ -f "gradlew" ]; then
-          echo "Using gradlew..."
-          chmod +x gradlew
-          ./gradlew assembleDebug
-        else
-          echo "gradlew not found, using system gradle..."
-          gradle assembleDebug
-        fi
+        gradle assembleDebug
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug
+        name: eFootball-Assist-APK
         path: "**/app/build/outputs/apk/debug/app-debug.apk"
