@@ -25,11 +25,14 @@ jobs:
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
         cd "$DIR"
         
-        # هنا كنزيدو جوج سطور اللي نساهم Gemini
+        # نطفيو Jetifier حيتاش هو اللي كيخلي OpenCV ياكل الذاكرة
         echo "android.useAndroidX=true" >> gradle.properties
-        echo "android.enableJetifier=true" >> gradle.properties
+        echo "android.enableJetifier=false" >> gradle.properties
         
-        # وكنصلحو الغلطة القديمة
+        # نعطيو ذاكرة كبيرة للبناء (4 جيجا)
+        echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
+        
+        # نصلحو الغلطة القديمة ديال Gemini
         sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
         
         gradle assembleDebug
