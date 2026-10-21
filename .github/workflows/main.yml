@@ -308,12 +308,14 @@ jobs:
         class YoloDetector(context: Context) {
             private var interpreter: Interpreter? = null
             private val modelPath = "${context.filesDir.absolutePath}/yolov8n.tflite"
-            fun init() {
+            fun init(): Boolean {
                 try {
-                    val file = java.io.File(modelPath); if (!file.exists()) return
+                    val file = java.io.File(modelPath); if (!file.exists()) return false
                     interpreter = Interpreter(FileInputStream(file).channel.map(FileChannel.MapMode.READ_ONLY, 0, file.length()), Interpreter.Options().apply { setNumThreads(4) })
-                } catch (e: Exception) { e.printStackTrace() }
+                    return true
+                } catch (e: Exception) { e.printStackTrace(); return false }
             }
+            fun isReady() = interpreter != null
             fun detect(bitmap: Bitmap): Pair<DetectedBall?, List<DetectedPlayer>> {
                 val itp = interpreter ?: return Pair(null, emptyList())
                 val input = ByteBuffer.allocateDirect(1 * 640 * 640 * 3 * 4).order(ByteOrder.nativeOrder())
@@ -343,20 +345,38 @@ jobs:
         import kotlinx.coroutines.flow.MutableStateFlow
         object VisionPipeline {
             val overlayState = MutableStateFlow(OverlayState())
+            val statusText = MutableStateFlow("Initializing...")
             private var yolo: YoloDetector? = null
             fun init(context: Context) {
-                yolo = YoloDetector(context); yolo?.init()
+                yolo = YoloDetector(context)
                 val file = java.io.File("${context.filesDir.absolutePath}/yolov8n.tflite")
-                if (!file.exists()) kotlin.concurrent.thread {
-                    try { java.net.URL("https://huggingface.co/Ultralytics/YOLOv8/resolve/main/yolov8n.tflite").openStream().use { input -> file.outputStream().use { input.copyTo(it) } }; yolo?.init() } catch (e: Exception) {}
+                if (file.exists()) {
+                    yolo?.init()
+                    statusText.value = "Model Ready!"
+                } else {
+                    statusText.value = "Downloading Model..."
+                    kotlin.concurrent.thread {
+                        try {
+                            java.net.URL("https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.tflite").openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+                            yolo?.init()
+                            statusText.value = "Model Ready!"
+                        } catch (e: Exception) {
+                            statusText.value = "Download Failed: " + e.message
+                        }
+                    }
                 }
             }
             fun processFrame(bitmap: Bitmap) {
+                if (yolo?.isReady() != true) return
                 val (ball, players) = yolo?.detect(bitmap) ?: return
                 if (ball != null && players.isNotEmpty()) {
                     val best = PassEngine.rankPasses(ball, players, emptyList()).firstOrNull()
                     overlayState.value = OverlayState(ball, players, best)
-                } else overlayState.value = OverlayState(ball, players)
+                    statusText.value = "Found Ball & Players!"
+                } else {
+                    overlayState.value = OverlayState(ball, players)
+                    statusText.value = "Searching... Ball: ${ball != null}, Players: ${players.size}"
+                }
             }
         }
         EOF
@@ -371,11 +391,19 @@ jobs:
             private val ballPaint = Paint().apply { color = Color.CYAN; style = Paint.Style.FILL }
             private val teamPaint = Paint().apply { color = Color.BLUE; style = Paint.Style.STROKE; strokeWidth = 6f }
             private val passPaint = Paint().apply { color = Color.GREEN; strokeWidth = 10f; style = Paint.Style.STROKE }
+            private val debugPaint = Paint().apply { color = Color.RED; style = Paint.Style.FILL }
+            private val textPaint = Paint().apply { color = Color.YELLOW; textSize = 50f; isAntiAlias = true }
+            
             private val handler = android.os.Handler(android.os.Looper.getMainLooper())
             private val runnable = object : Runnable { override fun run() { invalidate(); handler.postDelayed(this, 16) } }
             init { handler.post(runnable) }
+            
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
+                
+                canvas.drawCircle(width / 2f, height / 2f, 50f, debugPaint)
+                canvas.drawText(VisionPipeline.statusText.value, 100f, 150f, textPaint)
+                
                 val state = VisionPipeline.overlayState.value
                 state.ball?.let { canvas.drawCircle(it.screenPosition.x, it.screenPosition.y, 20f, ballPaint) }
                 for (p in state.players) canvas.drawCircle(p.screenPosition.x, p.screenPosition.y, 40f, teamPaint)
