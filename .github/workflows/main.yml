@@ -29,7 +29,6 @@ jobs:
         echo "android.enableJetifier=false" >> gradle.properties
         echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
         
-        # 1. We wipe out Gemini's broken UI and files
         rm -rf app/src/main/java/com/efootball/visionassist
         mkdir -p app/src/main/java/com/efootball/visionassist/service
         mkdir -p app/src/main/java/com/efootball/visionassist/overlay
@@ -39,7 +38,6 @@ jobs:
         mkdir -p app/src/main/res/drawable
         mkdir -p app/src/main/res/values
         
-        # 2. Build.gradle.kts (Fixing Kotlin 2.0 Compose Plugin requirement)
         cat << 'EOF' > app/build.gradle.kts
         plugins {
             id("com.android.application")
@@ -79,7 +77,6 @@ jobs:
         }
         EOF
 
-        # 3. Manifest & Themes
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -112,7 +109,6 @@ jobs:
         </resources>
         EOF
 
-        # 4. MainActivity
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/MainActivity.kt
         package com.efootball.visionassist
         import android.content.Intent
@@ -179,7 +175,6 @@ jobs:
         }
         EOF
 
-        # 5. Services
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/service/OverlayService.kt
         package com.efootball.visionassist.service
         import android.app.Service
@@ -266,14 +261,13 @@ jobs:
                     bitmap.copyPixelsFromBuffer(buffer)
                     VisionPipeline.processFrame(Bitmap.createBitmap(bitmap, 0, 0, width, height))
                     image.close()
-                }, null) # <--- FIXED HERE (removed extra null)
+                }, null)
             }
             override fun onDestroy() { super.onDestroy(); virtualDisplay?.release(); imageReader?.close(); mediaProjection?.stop() }
             override fun onBind(intent: Intent?): IBinder? = null
         }
         EOF
 
-        # 6. Data & Engine
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/data/Models.kt
         package com.efootball.visionassist.data
         data class ScreenPoint(val x: Float, val y: Float)
@@ -301,7 +295,6 @@ jobs:
         }
         EOF
 
-        # 7. Real Vision Pipeline & Yolo
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/YoloDetector.kt
         package com.efootball.visionassist.vision
         import android.content.Context
@@ -368,7 +361,6 @@ jobs:
         }
         EOF
 
-        # 8. Overlay View
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/overlay/PitchOverlayView.kt
         package com.efootball.visionassist.overlay
         import android.content.Context
@@ -392,7 +384,6 @@ jobs:
         }
         EOF
 
-        # 9. Icons
         echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24.0" android:viewportHeight="24.0"><path android:fillColor="#FF000000" android:pathData="M12,4.5C7,4.5 2.73,7.61 1,12c1.73,4.39 6,7.5 11,7.5s9.27,-3.11 11,-7.5c-1.73,-4.39 -6,-7.5 -11,-7.5zM12,17c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5zM12,9c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3 -1.34,-3 -3,-3z"/></vector>' > app/src/main/res/drawable/ic_vision_hud.xml
 
         gradle assembleDebug
