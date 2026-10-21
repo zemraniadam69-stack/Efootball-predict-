@@ -25,7 +25,11 @@ jobs:
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
         cd "$DIR"
         
-        # هنا كنصلحو الغلطة ديال Gemini
+        # هنا كنزيدو جوج سطور اللي نساهم Gemini
+        echo "android.useAndroidX=true" >> gradle.properties
+        echo "android.enableJetifier=true" >> gradle.properties
+        
+        # وكنصلحو الغلطة القديمة
         sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
         
         gradle assembleDebug
