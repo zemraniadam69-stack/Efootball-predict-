@@ -52,7 +52,7 @@ jobs:
                 minSdk = 26
                 targetSdk = 34
                 versionCode = 1
-                versionName = "1.0"
+                versionName = "2.0"
             }
             buildFeatures { compose = true }
             compileOptions {
@@ -70,20 +70,16 @@ jobs:
             implementation("androidx.compose.ui:ui-graphics")
             implementation("androidx.compose.ui:ui-tooling-preview")
             implementation("androidx.compose.material3:material3")
-            implementation("org.tensorflow:tensorflow-lite:2.14.0")
-            implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-            implementation("com.squareup.okhttp3:okhttp:4.12.0")
         }
         EOF
 
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+            <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
             <application
                 android:allowBackup="true"
                 android:icon="@drawable/ic_vision_hud"
@@ -111,9 +107,11 @@ jobs:
 
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/MainActivity.kt
         package com.efootball.visionassist
+        import android.Manifest
         import android.content.Intent
         import android.media.projection.MediaProjectionManager
         import android.net.Uri
+        import android.os.Build
         import android.os.Bundle
         import android.provider.Settings
         import androidx.activity.ComponentActivity
@@ -132,6 +130,7 @@ jobs:
 
         class MainActivity : ComponentActivity() {
             private var hasOverlay by mutableStateOf(false)
+            private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
             private val projectionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
                 if (result.resultCode == RESULT_OK && result.data != null) {
                     val intent = Intent(this, CaptureService::class.java)
@@ -142,6 +141,9 @@ jobs:
             }
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
                 setContent {
                     MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF10B981), background = Color(0xFF020617))) {
                         Column(
@@ -149,7 +151,7 @@ jobs:
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
-                            Text("eFootball Vision Assist", color = Color(0xFF34D399), style = MaterialTheme.typography.headlineMedium)
+                            Text("eFootball Vision Assist v2", color = Color(0xFF34D399), style = MaterialTheme.typography.headlineMedium)
                             Spacer(modifier = Modifier.height(32.dp))
                             Button(onClick = {
                                 if (!Settings.canDrawOverlays(this@MainActivity)) {
@@ -210,6 +212,7 @@ jobs:
         package com.efootball.visionassist.service
         import android.app.*
         import android.content.Intent
+        import android.content.pm.ServiceInfo
         import android.graphics.Bitmap
         import android.graphics.PixelFormat
         import android.hardware.display.DisplayManager
@@ -218,7 +221,9 @@ jobs:
         import android.media.projection.MediaProjection
         import android.media.projection.MediaProjectionManager
         import android.os.Build
+        import android.os.Handler
         import android.os.IBinder
+        import android.os.Looper
         import android.util.DisplayMetrics
         import android.view.WindowManager
         import androidx.core.app.NotificationCompat
@@ -229,22 +234,54 @@ jobs:
             private var mediaProjection: MediaProjection? = null
             private var virtualDisplay: VirtualDisplay? = null
             private var imageReader: ImageReader? = null
+            
             override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     val channel = NotificationChannel("v_channel", "Vision", NotificationManager.IMPORTANCE_LOW)
                     (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
                 }
-                startForeground(1, NotificationCompat.Builder(this, "v_channel").setContentTitle("Vision Running").setSmallIcon(R.drawable.ic_vision_hud).build())
+                
+                val notification = NotificationCompat.Builder(this, "v_channel").setContentTitle("Vision Running").setSmallIcon(R.drawable.ic_vision_hud).build()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                } else {
+                    startForeground(1, notification)
+                }
+                
+                VisionPipeline.statusText.value = "Service Started..."
+                
                 val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
-                val data = intent?.getParcelableExtra<Intent>("data")
+                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent?.getParcelableExtra("data", Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent?.getParcelableExtra("data")
+                }
+                
                 if (data != null && mediaProjection == null) {
-                    val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                    mediaProjection = manager.getMediaProjection(resultCode, data)
-                    setupVirtualDisplay()
-                    VisionPipeline.init(this)
+                    try {
+                        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        mediaProjection = manager.getMediaProjection(resultCode, data)
+                        
+                        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                            override fun onStop() {
+                                super.onStop()
+                                virtualDisplay?.release()
+                                imageReader?.close()
+                                mediaProjection = null
+                            }
+                        }, Handler(Looper.getMainLooper()))
+                        
+                        VisionPipeline.statusText.value = "Projection Granted..."
+                        setupVirtualDisplay()
+                        VisionPipeline.init()
+                    } catch (e: Exception) {
+                        VisionPipeline.statusText.value = "Error: ${e.message}"
+                    }
                 }
                 return START_STICKY
             }
+            
             private fun setupVirtualDisplay() {
                 val metrics = DisplayMetrics()
                 val wm = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -295,84 +332,62 @@ jobs:
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/YoloDetector.kt
-        package com.efootball.visionassist.vision
-        import android.content.Context
-        import android.graphics.Bitmap
-        import org.tensorflow.lite.Interpreter
-        import java.io.FileInputStream
-        import java.nio.ByteBuffer
-        import java.nio.ByteOrder
-        import java.nio.channels.FileChannel
-        import com.efootball.visionassist.data.*
-        class YoloDetector(context: Context) {
-            private var interpreter: Interpreter? = null
-            private val modelPath = "${context.filesDir.absolutePath}/yolov8n.tflite"
-            fun init(): Boolean {
-                try {
-                    val file = java.io.File(modelPath); if (!file.exists()) return false
-                    interpreter = Interpreter(FileInputStream(file).channel.map(FileChannel.MapMode.READ_ONLY, 0, file.length()), Interpreter.Options().apply { setNumThreads(4) })
-                    return true
-                } catch (e: Exception) { e.printStackTrace(); return false }
-            }
-            fun isReady() = interpreter != null
-            fun detect(bitmap: Bitmap): Pair<DetectedBall?, List<DetectedPlayer>> {
-                val itp = interpreter ?: return Pair(null, emptyList())
-                val input = ByteBuffer.allocateDirect(1 * 640 * 640 * 3 * 4).order(ByteOrder.nativeOrder())
-                val pixels = IntArray(640 * 640)
-                Bitmap.createScaledBitmap(bitmap, 640, 640, true).getPixels(pixels, 0, 640, 0, 0, 640, 640)
-                for (p in pixels) { input.putFloat(((p shr 16 and 0xFF) / 255.0f)); input.putFloat(((p shr 8 and 0xFF) / 255.0f)); input.putFloat(((p and 0xFF) / 255.0f)) }
-                val output = Array(1) { Array(84) { FloatArray(8400) } }
-                itp.run(input, output)
-                var ball: DetectedBall? = null; val players = mutableListOf<DetectedPlayer>(); val out = output[0]
-                for (i in 0 until 8400) {
-                    val x = out[0][i] * 640f; val y = out[1][i] * 640f; val sP = out[4][i]; val sB = out[32][i]
-                    val sx = bitmap.width / 640f; val sy = bitmap.height / 640f
-                    if (sB > 0.4f && ball == null) ball = DetectedBall(ScreenPoint(x * sx, y * sy), PitchPoint(x, y))
-                    else if (sP > 0.4f && players.size < 22) players.add(DetectedPlayer(ScreenPoint(x * sx, y * sy), PitchPoint(x, y), PlayerRole.TEAMMATE, players.size))
-                }
-                return Pair(ball, players)
-            }
-        }
-        EOF
-
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/VisionPipeline.kt
         package com.efootball.visionassist.vision
-        import android.content.Context
         import android.graphics.Bitmap
+        import android.graphics.Color
         import com.efootball.visionassist.data.*
         import com.efootball.visionassist.engine.PassEngine
         import kotlinx.coroutines.flow.MutableStateFlow
+        import kotlin.math.abs
+
         object VisionPipeline {
             val overlayState = MutableStateFlow(OverlayState())
-            val statusText = MutableStateFlow("Initializing...")
-            private var yolo: YoloDetector? = null
-            fun init(context: Context) {
-                yolo = YoloDetector(context)
-                val file = java.io.File("${context.filesDir.absolutePath}/yolov8n.tflite")
-                if (file.exists()) {
-                    yolo?.init()
-                    statusText.value = "Model Ready!"
-                } else {
-                    statusText.value = "Downloading Model..."
-                    kotlin.concurrent.thread {
-                        try {
-                            java.net.URL("https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.tflite").openStream().use { input -> file.outputStream().use { input.copyTo(it) } }
-                            yolo?.init()
-                            statusText.value = "Model Ready!"
-                        } catch (e: Exception) {
-                            statusText.value = "Download Failed: " + e.message
+            val statusText = MutableStateFlow("Color Engine Ready")
+            
+            fun init() { statusText.value = "Color Engine Ready" }
+            
+            fun processFrame(bitmap: Bitmap) {
+                // Downscale for performance
+                val scaled = Bitmap.createScaledBitmap(bitmap, bitmap.width / 4, bitmap.height / 4, false)
+                val width = scaled.width
+                val height = scaled.height
+                val pixels = IntArray(width * height)
+                scaled.getPixels(pixels, 0, width, 0, 0, width, height)
+
+                var ball: DetectedBall? = null
+                val players = mutableListOf<DetectedPlayer>()
+
+                // Simple color scanning (scan every 4th pixel for speed)
+                for (y in 0 until height step 4) {
+                    for (x in 0 until width step 4) {
+                        val p = pixels[y * width + x]
+                        val r = Color.red(p)
+                        val g = Color.green(p)
+                        val b = Color.blue(p)
+
+                        // 1. Ball Detection (White/Bright)
+                        if (r > 200 && g > 200 && b > 200 && ball == null) {
+                            // Scale back up coordinates
+                            ball = DetectedBall(ScreenPoint(x * 4f, y * 4f), PitchPoint(x.toFloat(), y.toFloat()))
+                        }
+                        
+                        // 2. Player Detection (Not green, not white, not black)
+                        // If it's a strong color (like Red or Blue)
+                        if ((r > 150 && g < 100 && b < 100) || (b > 150 && r < 100 && g < 100)) {
+                            // Avoid adding too many players by checking distance
+                            val pt = ScreenPoint(x * 4f, y * 4f)
+                            if (players.none { abs(it.screenPosition.x - pt.x) < 50 && abs(it.screenPosition.y - pt.y) < 50 }) {
+                                players.add(DetectedPlayer(pt, PitchPoint(x.toFloat(), y.toFloat()), PlayerRole.TEAMMATE, players.size))
+                            }
                         }
                     }
                 }
-            }
-            fun processFrame(bitmap: Bitmap) {
-                if (yolo?.isReady() != true) return
-                val (ball, players) = yolo?.detect(bitmap) ?: return
+
                 if (ball != null && players.isNotEmpty()) {
                     val best = PassEngine.rankPasses(ball, players, emptyList()).firstOrNull()
                     overlayState.value = OverlayState(ball, players, best)
-                    statusText.value = "Found Ball & Players!"
+                    statusText.value = "Found! Players: ${players.size}"
                 } else {
                     overlayState.value = OverlayState(ball, players)
                     statusText.value = "Searching... Ball: ${ball != null}, Players: ${players.size}"
@@ -391,8 +406,7 @@ jobs:
             private val ballPaint = Paint().apply { color = Color.CYAN; style = Paint.Style.FILL }
             private val teamPaint = Paint().apply { color = Color.BLUE; style = Paint.Style.STROKE; strokeWidth = 6f }
             private val passPaint = Paint().apply { color = Color.GREEN; strokeWidth = 10f; style = Paint.Style.STROKE }
-            private val debugPaint = Paint().apply { color = Color.RED; style = Paint.Style.FILL }
-            private val textPaint = Paint().apply { color = Color.YELLOW; textSize = 50f; isAntiAlias = true }
+            private val textPaint = Paint().apply { color = Color.YELLOW; textSize = 60f; isAntiAlias = true }
             
             private val handler = android.os.Handler(android.os.Looper.getMainLooper())
             private val runnable = object : Runnable { override fun run() { invalidate(); handler.postDelayed(this, 16) } }
@@ -401,12 +415,11 @@ jobs:
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
                 
-                canvas.drawCircle(width / 2f, height / 2f, 50f, debugPaint)
                 canvas.drawText(VisionPipeline.statusText.value, 100f, 150f, textPaint)
                 
                 val state = VisionPipeline.overlayState.value
-                state.ball?.let { canvas.drawCircle(it.screenPosition.x, it.screenPosition.y, 20f, ballPaint) }
-                for (p in state.players) canvas.drawCircle(p.screenPosition.x, p.screenPosition.y, 40f, teamPaint)
+                state.ball?.let { canvas.drawCircle(it.screenPosition.x, it.screenPosition.y, 30f, ballPaint) }
+                for (p in state.players) canvas.drawCircle(p.screenPosition.x, p.screenPosition.y, 50f, teamPaint)
                 state.bestPass?.let { best -> state.ball?.let { b -> canvas.drawLine(b.screenPosition.x, b.screenPosition.y, best.target.screenPosition.x, best.target.screenPosition.y, passPaint) } }
             }
         }
