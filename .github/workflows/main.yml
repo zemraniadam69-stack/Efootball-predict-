@@ -112,7 +112,7 @@ jobs:
         </resources>
         EOF
 
-        # 4. MainActivity (Clean Compose UI)
+        # 4. MainActivity
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/MainActivity.kt
         package com.efootball.visionassist
         import android.content.Intent
@@ -266,7 +266,7 @@ jobs:
                     bitmap.copyPixelsFromBuffer(buffer)
                     VisionPipeline.processFrame(Bitmap.createBitmap(bitmap, 0, 0, width, height))
                     image.close()
-                }, null, null)
+                }, null) # <--- FIXED HERE (removed extra null)
             }
             override fun onDestroy() { super.onDestroy(); virtualDisplay?.release(); imageReader?.close(); mediaProjection?.stop() }
             override fun onBind(intent: Intent?): IBinder? = null
