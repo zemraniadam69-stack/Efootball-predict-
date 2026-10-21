@@ -20,7 +20,7 @@ jobs:
       with:
         gradle-version: 8.10.2
         
-    - name: Build Debug APK
+    - name: Fix Code and Build APK
       run: |
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
         cd "$DIR"
@@ -29,17 +29,87 @@ jobs:
         echo "android.enableJetifier=false" >> gradle.properties
         echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
         
+        # Fix dependencies
         sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
+        sed -i 's/implementation("org.tensorflow:tensorflow-lite:2.14.0")/implementation("org.tensorflow:tensorflow-lite:2.14.0")\n    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")/g' app/build.gradle.kts
         
-        # صاوب الملفات الناقصة اللي نساهم Gemini
+        # 1. Data Models
+        mkdir -p app/src/main/java/com/efootball/visionassist/data
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/data/Models.kt
+        package com.efootball.visionassist.data
+        data class ScreenPoint(val x: Float, val y: Float)
+        data class PitchPoint(val x: Float, val y: Float) {
+            fun distanceTo(other: PitchPoint): Float {
+                val dx = x - other.x
+                val dy = y - other.y
+                return kotlin.math.sqrt(dx * dx + dy * dy)
+            }
+        }
+        enum class PlayerRole { TEAMMATE, OPPONENT }
+        data class DetectedBall(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint? = null)
+        data class DetectedPlayer(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint? = null, val role: PlayerRole = PlayerRole.TEAMMATE, val number: Int = 0)
+        data class PassOption(val target: DetectedPlayer, val score: Float, val laneClearance: Float = 0f, val forwardProgress: Float = 0f, val interceptionRisk: Float = 0f)
+        data class OverlayState(val ball: DetectedBall? = null, val players: List<DetectedPlayer> = emptyList(), val bestPass: PassOption? = null)
+        data class AssistSettings(val showOpponents: Boolean = true, val showRadar: Boolean = true, val showPassLines: Boolean = true, val lineThickness: Float = 4f)
+        EOF
+        
+        # 2. Vision Pipeline
+        mkdir -p app/src/main/java/com/efootball/visionassist/vision
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/VisionPipeline.kt
+        package com.efootball.visionassist.vision
+        import com.efootball.visionassist.data.*
+        import kotlinx.coroutines.flow.MutableStateFlow
+        object VisionPipeline {
+            val overlayState = MutableStateFlow(OverlayState())
+            val settings = MutableStateFlow(AssistSettings())
+            fun getPitchDetector(): PitchDetector = PitchDetector()
+            fun processFrame(bitmap: android.graphics.Bitmap) {}
+            fun release() {}
+        }
+        EOF
+        
+        # 3. UI Theme (Green, Purple, Blue, Dark)
+        mkdir -p app/src/main/java/com/efootball/visionassist/ui/theme
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/ui/theme/Color.kt
+        package com.efootball.visionassist.ui.theme
+        import androidx.compose.ui.graphics.Color
+        val Slate950 = Color(0xFF020617)
+        val Slate900 = Color(0xFF0F172A)
+        val Slate800 = Color(0xFF1E293B)
+        val Slate400 = Color(0xFF94A3B8)
+        val Slate300 = Color(0xFFCBD5E1)
+        val Emerald500 = Color(0xFF10B981)
+        val Emerald400 = Color(0xFF34D399)
+        val Cyan500 = Color(0xFF06B6D4)
+        val Cyan400 = Color(0xFF22D3EE)
+        val Purple500 = Color(0xFFA855F7)
+        val Red500 = Color(0xFFEF4444)
+        EOF
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/ui/theme/Theme.kt
+        package com.efootball.visionassist.ui.theme
+        import androidx.compose.material3.MaterialTheme
+        import androidx.compose.material3.darkColorScheme
+        import androidx.compose.runtime.Composable
+        private val DarkColorScheme = darkColorScheme(
+            primary = Emerald500, secondary = Purple500, tertiary = Cyan500,
+            background = Slate950, surface = Slate900,
+            onPrimary = Slate950, onSecondary = Slate950,
+            onBackground = Slate300, onSurface = Slate300
+        )
+        @Composable
+        fun EFootballVisionAssistTheme(content: @Composable () -> Unit) {
+            MaterialTheme(colorScheme = DarkColorScheme, content = content)
+        }
+        EOF
+
+        # 4. Resources (Strings, Themes, XMLs)
         mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/res/values
-        
         echo '<?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><exclude domain="sharedpref" path="device.xml"/></cloud-backup></data-extraction-rules>' > app/src/main/res/xml/data_extraction_rules.xml
         echo '<?xml version="1.0" encoding="utf-8"?><full-backup-content><exclude domain="sharedpref" path="device.xml"/></full-backup-content>' > app/src/main/res/xml/backup_rules.xml
         echo '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24.0" android:viewportHeight="24.0"><path android:fillColor="#FF000000" android:pathData="M12,4.5C7,4.5 2.73,7.61 1,12c1.73,4.39 6,7.5 11,7.5s9.27,-3.11 11,-7.5c-1.73,-4.39 -6,-7.5 -11,-7.5zM12,17c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5zM12,9c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3 -1.34,-3 -3,-3z"/></vector>' > app/src/main/res/drawable/ic_vision_hud.xml
-        echo '<resources><string name="app_name">eFootball Assist</string></resources>' > app/src/main/res/values/strings.xml
-        echo '<resources><style name="Theme.EFootballVisionAssist" parent="android:Theme.Material.Light.NoActionBar" /></resources>' > app/src/main/res/values/themes.xml
-        
+        echo '<resources><string name="app_name">eFootball Vision Assist</string></resources>' > app/src/main/res/values/strings.xml
+        echo '<resources><style name="Theme.EFootballVisionAssist" parent="android:Theme.Material.NoActionBar" /></resources>' > app/src/main/res/values/themes.xml
+
         gradle assembleDebug
         
     - name: Upload APK
