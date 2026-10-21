@@ -24,6 +24,10 @@ jobs:
       run: |
         DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
         cd "$DIR"
+        
+        # هنا كنصلحو الغلطة ديال Gemini
+        sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
+        
         gradle assembleDebug
         
     - name: Upload APK
