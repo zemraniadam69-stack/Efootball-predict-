@@ -29,11 +29,10 @@ jobs:
         echo "android.enableJetifier=false" >> gradle.properties
         echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
         
-        # Fix dependencies
         sed -i 's/implementation(libs.androidx.lifecycle.runtime.ktx)/implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")/g' app/build.gradle.kts
         sed -i 's/implementation("org.tensorflow:tensorflow-lite:2.14.0")/implementation("org.tensorflow:tensorflow-lite:2.14.0")\n    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")\n    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")/g' app/build.gradle.kts
         
-        # 1. Data Models
+        # 1. Clean Data Models (Fixed Nullability & Added rank)
         mkdir -p app/src/main/java/com/efootball/visionassist/data
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/data/Models.kt
         package com.efootball.visionassist.data
@@ -46,14 +45,43 @@ jobs:
             }
         }
         enum class PlayerRole { TEAMMATE, OPPONENT }
-        data class DetectedBall(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint? = null)
-        data class DetectedPlayer(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint? = null, val role: PlayerRole = PlayerRole.TEAMMATE, val number: Int = 0)
-        data class PassOption(val target: DetectedPlayer, val score: Float, val laneClearance: Float = 0f, val forwardProgress: Float = 0f, val interceptionRisk: Float = 0f)
+        data class DetectedBall(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint = PitchPoint(0f, 0f))
+        data class DetectedPlayer(val screenPosition: ScreenPoint, val pitchPosition: PitchPoint = PitchPoint(0f, 0f), val role: PlayerRole = PlayerRole.TEAMMATE, val number: Int = 0)
+        data class PassOption(val target: DetectedPlayer, val score: Float, val laneClearance: Float = 0f, val forwardProgress: Float = 0f, val interceptionRisk: Float = 0f, val rank: Int = 0)
         data class OverlayState(val ball: DetectedBall? = null, val players: List<DetectedPlayer> = emptyList(), val bestPass: PassOption? = null)
         data class AssistSettings(val showOpponents: Boolean = true, val showRadar: Boolean = true, val showPassLines: Boolean = true, val lineThickness: Float = 4f)
         EOF
         
-        # 2. Vision Pipeline
+        # 2. Clean Pass Engine (Rewritten to fix Gemini's errors)
+        mkdir -p app/src/main/java/com/efootball/visionassist/engine
+        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/engine/PassEngine.kt
+        package com.efootball.visionassist.engine
+        import com.efootball.visionassist.data.*
+        object PassEngine {
+            fun rankPasses(
+                ball: DetectedBall,
+                teammates: List<DetectedPlayer>,
+                opponents: List<DetectedPlayer>,
+                goalX: Float = 105f
+            ): List<PassOption> {
+                if (teammates.isEmpty()) return emptyList()
+                return teammates.mapIndexed { index, mate ->
+                    val laneClearance = opponents.minOfOrNull { opp -> 
+                        mate.pitchPosition.distanceTo(opp.pitchPosition) 
+                    } ?: 50f
+                    val forwardProgress = mate.pitchPosition.x - ball.pitchPosition.x
+                    val risk = 1f / (laneClearance + 0.1f)
+                    val score = (laneClearance * 0.55f) + (forwardProgress * 0.30f) - (risk * 0.40f)
+                    PassOption(
+                        target = mate, score = score, laneClearance = laneClearance,
+                        forwardProgress = forwardProgress, interceptionRisk = risk, rank = index + 1
+                    )
+                }.sortedByDescending { it.score }
+            }
+        }
+        EOF
+
+        # 3. Vision Pipeline
         mkdir -p app/src/main/java/com/efootball/visionassist/vision
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/VisionPipeline.kt
         package com.efootball.visionassist.vision
@@ -68,7 +96,7 @@ jobs:
         }
         EOF
         
-        # 3. UI Theme (Green, Purple, Blue, Dark)
+        # 4. UI Theme (Green, Purple, Blue, Dark)
         mkdir -p app/src/main/java/com/efootball/visionassist/ui/theme
         cat << 'EOF' > app/src/main/java/com/efootball/visionassist/ui/theme/Color.kt
         package com.efootball.visionassist.ui.theme
@@ -102,7 +130,7 @@ jobs:
         }
         EOF
 
-        # 4. Resources (Strings, Themes, XMLs)
+        # 5. Resources
         mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/res/values
         echo '<?xml version="1.0" encoding="utf-8"?><data-extraction-rules><cloud-backup><exclude domain="sharedpref" path="device.xml"/></cloud-backup></data-extraction-rules>' > app/src/main/res/xml/data_extraction_rules.xml
         echo '<?xml version="1.0" encoding="utf-8"?><full-backup-content><exclude domain="sharedpref" path="device.xml"/></full-backup-content>' > app/src/main/res/xml/backup_rules.xml
