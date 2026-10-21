@@ -17,20 +17,28 @@ jobs:
         
     - name: Build Debug APK
       run: |
-        # كيقلب على فين كاين gradlew أوتوماتيكياً
-        GRADLEW_PATH=$(find app_source -name gradlew -type f | head -n 1)
-        if [ -z "$GRADLEW_PATH" ]; then
-          echo "Error: gradlew not found!"
+        # كيقلب على المجلد اللي فيه settings.gradle
+        DIR=$(find app_source -name "settings.gradle*" -printf '%h\n' | head -n 1)
+        if [ -z "$DIR" ]; then
+          echo "Error: settings.gradle not found! Here is the file structure:"
+          ls -R app_source
           exit 1
         fi
-        PROJECT_DIR=$(dirname "$GRADLEW_PATH")
-        echo "Found project at: $PROJECT_DIR"
-        cd "$PROJECT_DIR"
-        chmod +x gradlew
-        ./gradlew assembleDebug
+        echo "Project root found at: $DIR"
+        cd "$DIR"
+        
+        # إلا لقى gradlew كيستعملو، إلا ما لقاهش كيستعمل النظام
+        if [ -f "gradlew" ]; then
+          echo "Using gradlew..."
+          chmod +x gradlew
+          ./gradlew assembleDebug
+        else
+          echo "gradlew not found, using system gradle..."
+          gradle assembleDebug
+        fi
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: eFootball-Assist-APK
+        name: app-debug
         path: "**/app/build/outputs/apk/debug/app-debug.apk"
