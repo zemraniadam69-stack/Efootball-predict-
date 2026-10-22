@@ -152,6 +152,14 @@ jobs:
         }
         EOF
 
+        cat << 'EOF' > app/src/main/java/com/pax/injector/data/Models.kt
+        package com.pax.injector.data
+        data class ScreenPoint(val x: Float, val y: Float) {
+            fun distanceTo(o: ScreenPoint): Float = kotlin.math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y))
+        }
+        data class OverlayState(val cueBall: ScreenPoint? = null, val targetBall: ScreenPoint? = null, val aimPoint: ScreenPoint? = null, val pocketPoint: ScreenPoint? = null)
+        EOF
+
         cat << 'EOF' > app/src/main/java/com/pax/injector/MainActivity.kt
         package com.pax.injector
         import android.Manifest
@@ -303,6 +311,7 @@ jobs:
 
         cat << 'EOF' > app/src/main/java/com/pax/injector/overlay/ControlPanel.kt
         package com.pax.injector.overlay
+        import androidx.compose.foundation.BorderStroke
         import androidx.compose.foundation.background
         import androidx.compose.foundation.border
         import androidx.compose.foundation.clickable
@@ -322,9 +331,9 @@ jobs:
 
         @Composable
         fun ControlPanel(onClose: () -> Unit) {
-            val isRunning by ServiceState.showControlPanel.collectAsState()
+            val showPanel by ServiceState.showControlPanel.collectAsState()
 
-            if (!isRunning) return
+            if (!showPanel) return
 
             Box(
                 modifier = Modifier
@@ -479,14 +488,6 @@ jobs:
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/pax/injector/data/Models.kt
-        package com.pax.injector.data
-        data class ScreenPoint(val x: Float, val y: Float) {
-            fun distanceTo(o: ScreenPoint): Float = kotlin.math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y))
-        }
-        data class OverlayState(val cueBall: ScreenPoint? = null, val targetBall: ScreenPoint? = null, val aimPoint: ScreenPoint? = null, val pocketPoint: ScreenPoint? = null)
-        EOF
-
         cat << 'EOF' > app/src/main/java/com/pax/injector/engine/PhysicsEngine.kt
         package com.pax.injector.engine
         import com.pax.injector.data.*
@@ -549,8 +550,8 @@ jobs:
 
                 for (i in 0 until circles.cols()) {
                     val c = circles.get(0, i)
-                    val x = c[0] * 2f
-                    val y = c[1] * 2f
+                    val x = c[0].toFloat() * 2f
+                    val y = c[1].toFloat() * 2f
                     
                     val pixel = bitmap.getPixel(x.toInt().coerceIn(0, bitmap.width-1), y.toInt().coerceIn(0, bitmap.height-1))
                     val r = Color.red(pixel)
@@ -570,7 +571,7 @@ jobs:
                 if (cueBall != null && targetBall != null) {
                     var minDist = Float.MAX_VALUE
                     for (p in Config.pockets) {
-                        val pPoint = ScreenPoint((bitmap.width * p.x).toFloat(), (bitmap.height * p.y).toFloat())
+                        val pPoint = ScreenPoint(bitmap.width.toFloat() * p.x, bitmap.height.toFloat() * p.y)
                         val d = targetBall.distanceTo(pPoint)
                         if (d < minDist) {
                             minDist = d
