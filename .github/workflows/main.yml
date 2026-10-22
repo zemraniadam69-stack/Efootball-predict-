@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build PAX-INJECTOR V2
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -30,20 +30,14 @@ jobs:
         echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
         
         rm -rf app/src/main/java/com/efootball/visionassist
-        mkdir -p app/src/main/java/com/efootball/visionassist/service
-        mkdir -p app/src/main/java/com/efootball/visionassist/overlay
-        mkdir -p app/src/main/java/com/efootball/visionassist/vision
-        mkdir -p app/src/main/java/com/efootball/visionassist/data
-        mkdir -p app/src/main/java/com/efootball/visionassist/engine
+        mkdir -p app/src/main/java/com/pax/injector/service
+        mkdir -p app/src/main/java/com/pax/injector/overlay
+        mkdir -p app/src/main/java/com/pax/injector/vision
+        mkdir -p app/src/main/java/com/pax/injector/data
+        mkdir -p app/src/main/java/com/pax/injector/engine
         mkdir -p app/src/main/res/drawable
         mkdir -p app/src/main/res/values
         mkdir -p app/src/main/res/layout
-        
-        # Placeholders (Replace these using MT Manager)
-        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" | base64 -d > app/src/main/res/drawable/bg_main.png
-        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" | base64 -d > app/src/main/res/drawable/title_logo.png
-        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" | base64 -d > app/src/main/res/drawable/btn_toggle.png
-        echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" | base64 -d > app/src/main/res/drawable/floating_stop_btn.png
         
         cat << 'EOF' > app/build.gradle.kts
         plugins {
@@ -52,14 +46,14 @@ jobs:
             id("org.jetbrains.kotlin.plugin.compose")
         }
         android {
-            namespace = "com.efootball.visionassist"
+            namespace = "com.pax.injector"
             compileSdk = 34
             defaultConfig {
-                applicationId = "com.efootball.visionassist"
+                applicationId = "com.pax.injector"
                 minSdk = 26
                 targetSdk = 34
-                versionCode = 1
-                versionName = "12.0"
+                versionCode = 2
+                versionName = "2.0"
             }
             buildFeatures { compose = true }
             compileOptions {
@@ -77,7 +71,9 @@ jobs:
             implementation("androidx.compose.ui:ui-graphics")
             implementation("androidx.compose.ui:ui-tooling-preview")
             implementation("androidx.compose.material3:material3")
+            implementation("androidx.compose.material:material-icons-extended")
             implementation("androidx.compose.foundation:foundation")
+            implementation("org.opencv:opencv:4.10.0")
         }
         EOF
 
@@ -91,7 +87,7 @@ jobs:
             <application
                 android:allowBackup="true"
                 android:icon="@drawable/ic_vision_hud"
-                android:label="Zbeyeb_Lmr4yeb"
+                android:label="PAX-INJECTOR V2"
                 android:theme="@style/Theme.App">
                 <activity
                     android:name=".MainActivity"
@@ -113,29 +109,52 @@ jobs:
         </resources>
         EOF
 
-        cat << 'EOF' > app/src/main/res/layout/floating_button.xml
-        <?xml version="1.0" encoding="utf-8"?>
-        <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-            android:layout_width="80dp"
-            android:layout_height="80dp">
-            <ImageView
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:src="@drawable/floating_stop_btn"
-                android:scaleType="fitCenter" />
-        </FrameLayout>
-        EOF
-
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/data/ServiceState.kt
-        package com.efootball.visionassist.data
+        cat << 'EOF' > app/src/main/java/com/pax/injector/data/ServiceState.kt
+        package com.pax.injector.data
         import kotlinx.coroutines.flow.MutableStateFlow
         object ServiceState {
             val isRunning = MutableStateFlow(false)
+            val showControlPanel = MutableStateFlow(true)
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/MainActivity.kt
-        package com.efootball.visionassist
+        cat << 'EOF' > app/src/main/java/com/pax/injector/data/Config.kt
+        package com.pax.injector.data
+        import android.content.Context
+        import android.graphics.Color
+
+        object Config {
+            var cueBallColor = Color.WHITE
+            var targetBallColor = Color.RED
+            var tableColor = Color.GREEN
+            
+            // Default pockets (approximate for a centered table)
+            var pockets = listOf(
+                ScreenPoint(0.1f, 0.1f), ScreenPoint(0.5f, 0.1f), ScreenPoint(0.9f, 0.1f),
+                ScreenPoint(0.1f, 0.9f), ScreenPoint(0.5f, 0.9f), ScreenPoint(0.9f, 0.9f)
+            )
+
+            fun save(context: Context) {
+                val prefs = context.getSharedPreferences("pax_config", Context.MODE_PRIVATE)
+                prefs.edit().apply {
+                    putInt("cueColor", cueBallColor)
+                    putInt("targetColor", targetBallColor)
+                    putInt("tableColor", tableColor)
+                    apply()
+                }
+            }
+
+            fun load(context: Context) {
+                val prefs = context.getSharedPreferences("pax_config", Context.MODE_PRIVATE)
+                cueBallColor = prefs.getInt("cueColor", Color.WHITE)
+                targetBallColor = prefs.getInt("targetColor", Color.RED)
+                tableColor = prefs.getInt("tableColor", Color.GREEN)
+            }
+        }
+        EOF
+
+        cat << 'EOF' > app/src/main/java/com/pax/injector/MainActivity.kt
+        package com.pax.injector
         import android.Manifest
         import android.content.Intent
         import android.media.projection.MediaProjectionManager
@@ -146,23 +165,20 @@ jobs:
         import androidx.activity.ComponentActivity
         import androidx.activity.compose.setContent
         import androidx.activity.result.contract.ActivityResultContracts
-        import androidx.compose.foundation.Image
         import androidx.compose.foundation.background
-        import androidx.compose.foundation.clickable
         import androidx.compose.foundation.layout.*
         import androidx.compose.material3.*
         import androidx.compose.runtime.*
         import androidx.compose.ui.Alignment
         import androidx.compose.ui.Modifier
         import androidx.compose.ui.graphics.Color
-        import androidx.compose.ui.layout.ContentScale
-        import androidx.compose.ui.res.painterResource
         import androidx.compose.ui.text.font.FontWeight
         import androidx.compose.ui.unit.dp
         import androidx.compose.ui.unit.sp
-        import com.efootball.visionassist.data.ServiceState
-        import com.efootball.visionassist.service.CaptureService
-        import com.efootball.visionassist.service.OverlayService
+        import com.pax.injector.data.Config
+        import com.pax.injector.data.ServiceState
+        import com.pax.injector.service.CaptureService
+        import com.pax.injector.service.OverlayService
 
         class MainActivity : ComponentActivity() {
             private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -174,73 +190,40 @@ jobs:
                     startForegroundService(intent)
                     startService(Intent(this, OverlayService::class.java))
                     ServiceState.isRunning.value = true
+                    finish()
                 }
             }
             
             override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
+                Config.load(this)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
                 setContent {
-                    val isRunning by ServiceState.isRunning.collectAsState()
-                    
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Image(
-                            painter = painterResource(id = R.drawable.bg_main),
-                            contentDescription = "Background",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        // Slight dark tint for readability
-                        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)))
-
+                    MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0A0A0A))) {
                         Column(
-                            modifier = Modifier.fillMaxSize().padding(24.dp),
+                            modifier = Modifier.fillMaxSize().background(Color(0xFF0A0A0A)).padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.SpaceBetween
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.title_logo),
-                                    contentDescription = "Title Logo",
-                                    contentScale = ContentScale.Fit,
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.8f)
-                                        .aspectRatio(1.5f)
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "Zbeyeb_Lmr4yeb",
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 2.sp
-                                )
-                            }
-
-                            // Single Toggle Button
-                            Image(
-                                painter = painterResource(id = R.drawable.btn_toggle),
-                                contentDescription = "Toggle",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .size(150.dp)
-                                    .clickable {
-                                        if (isRunning) {
-                                            stopService(Intent(this@MainActivity, CaptureService::class.java))
-                                            stopService(Intent(this@MainActivity, OverlayService::class.java))
-                                            ServiceState.isRunning.value = false
-                                        } else {
-                                            if (!Settings.canDrawOverlays(this@MainActivity)) {
-                                                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                                            } else {
-                                                val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                                projectionLauncher.launch(manager.createScreenCaptureIntent())
-                                            }
-                                        }
+                            Text("PAX-INJECTOR", color = Color(0xFF00FFCC), fontSize = 32.sp, fontWeight = FontWeight.Black)
+                            Text("V2.0 // CYBER", color = Color.Magenta, fontSize = 16.sp, letterSpacing = 4.sp)
+                            Spacer(modifier = Modifier.height(48.dp))
+                            
+                            Button(
+                                onClick = {
+                                    if (!Settings.canDrawOverlays(this@MainActivity)) {
+                                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                                    } else {
+                                        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                        projectionLauncher.launch(manager.createScreenCaptureIntent())
                                     }
-                            )
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC))
+                            ) {
+                                Text("INITIALIZE SYSTEM", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -248,36 +231,33 @@ jobs:
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/service/OverlayService.kt
-        package com.efootball.visionassist.service
+        cat << 'EOF' > app/src/main/java/com/pax/injector/service/OverlayService.kt
+        package com.pax.injector.service
         import android.app.Service
         import android.content.Intent
         import android.graphics.PixelFormat
         import android.os.IBinder
         import android.view.Gravity
-        import android.view.LayoutInflater
-        import android.view.MotionEvent
-        import android.view.View
         import android.view.WindowManager
-        import com.efootball.visionassist.R
-        import com.efootball.visionassist.data.ServiceState
-        import com.efootball.visionassist.overlay.PitchOverlayView
+        import androidx.compose.ui.platform.ComposeView
+        import com.pax.injector.data.ServiceState
+        import com.pax.injector.overlay.ControlPanel
+        import com.pax.injector.overlay.PitchOverlayView
 
         class OverlayService : Service() {
             private lateinit var windowManager: WindowManager
             private var overlayView: PitchOverlayView? = null
-            private var floatingButton: View? = null
-            private lateinit var buttonParams: WindowManager.LayoutParams
+            private var controlPanel: ComposeView? = null
 
             override fun onCreate() {
                 super.onCreate()
                 windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-                setupOverlay()
-                setupFloatingButton()
+                setupVisionOverlay()
+                setupControlPanel()
                 ServiceState.isRunning.value = true
             }
 
-            private fun setupOverlay() {
+            private fun setupVisionOverlay() {
                 overlayView = PitchOverlayView(this)
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
@@ -289,53 +269,22 @@ jobs:
                 windowManager.addView(overlayView, params)
             }
 
-            private fun setupFloatingButton() {
-                val inflater = getSystemService(LAYOUT_INFLATER_SERVICE) as LayoutInflater
-                floatingButton = inflater.inflate(R.layout.floating_button, null)
-
-                buttonParams = WindowManager.LayoutParams(
-                    200, 200,
+            private fun setupControlPanel() {
+                controlPanel = ComposeView(this).apply {
+                    setContent {
+                        ControlPanel(onClose = { stopServices() })
+                    }
+                }
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                     PixelFormat.TRANSLUCENT
                 )
-                buttonParams.gravity = Gravity.TOP or Gravity.START
-                buttonParams.x = 100
-                buttonParams.y = 300
-
-                floatingButton?.setOnTouchListener(object : View.OnTouchListener {
-                    private var initialX = 0
-                    private var initialY = 0
-                    private var initialTouchX = 0f
-                    private var initialTouchY = 0f
-
-                    override fun onTouch(v: View?, event: MotionEvent?): Boolean {
-                        when (event?.action) {
-                            MotionEvent.ACTION_DOWN -> {
-                                initialX = buttonParams.x
-                                initialY = buttonParams.y
-                                initialTouchX = event.rawX
-                                initialTouchY = event.rawY
-                                return true
-                            }
-                            MotionEvent.ACTION_MOVE -> {
-                                buttonParams.x = initialX + (event.rawX - initialTouchX).toInt()
-                                buttonParams.y = initialY + (event.rawY - initialTouchY).toInt()
-                                windowManager.updateViewLayout(floatingButton, buttonParams)
-                                return true
-                            }
-                            MotionEvent.ACTION_UP -> {
-                                if (Math.abs(event.rawX - initialTouchX) < 10 && Math.abs(event.rawY - initialTouchY) < 10) {
-                                    stopServices()
-                                }
-                                return true
-                            }
-                        }
-                        return false
-                    }
-                })
-
-                windowManager.addView(floatingButton, buttonParams)
+                params.gravity = Gravity.TOP or Gravity.START
+                params.x = 50
+                params.y = 150
+                windowManager.addView(controlPanel, params)
             }
 
             private fun stopServices() {
@@ -346,15 +295,123 @@ jobs:
             override fun onDestroy() {
                 super.onDestroy()
                 overlayView?.let { windowManager.removeView(it) }
-                floatingButton?.let { windowManager.removeView(it) }
+                controlPanel?.let { windowManager.removeView(it) }
                 ServiceState.isRunning.value = false
             }
             override fun onBind(intent: Intent?): IBinder? = null
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/service/CaptureService.kt
-        package com.efootball.visionassist.service
+        cat << 'EOF' > app/src/main/java/com/pax/injector/overlay/ControlPanel.kt
+        package com.pax.injector.overlay
+        import androidx.compose.foundation.background
+        import androidx.compose.foundation.border
+        import androidx.compose.foundation.clickable
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.foundation.shape.RoundedCornerShape
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.draw.clip
+        import androidx.compose.ui.graphics.Color
+        import androidx.compose.ui.text.font.FontWeight
+        import androidx.compose.ui.unit.dp
+        import androidx.compose.ui.unit.sp
+        import com.pax.injector.data.Config
+        import com.pax.injector.data.ServiceState
+
+        @Composable
+        fun ControlPanel(onClose: () -> Unit) {
+            var isRunning by ServiceState.showControlPanel.collectAsState()
+
+            if (!isRunning) return
+
+            Box(
+                modifier = Modifier
+                    .width(300.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF0A0A0A).copy(alpha = 0.9f))
+                    .border(2.dp, Color(0xFF00FFCC), RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+            ) {
+                Column {
+                    // Header
+                    Text("PAX-INJECTOR V2", color = Color(0xFF00FFCC), fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    Text("SYSTEM READY", color = Color.Magenta, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Color Pickers (Simplified for UI)
+                    Text("CUE BALL COLOR", color = Color.White, fontSize = 12.sp)
+                    Row {
+                        ColorBox(Color.White) { Config.cueBallColor = android.graphics.Color.WHITE }
+                        ColorBox(Color.Yellow) { Config.cueBallColor = android.graphics.Color.YELLOW }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text("TARGET BALL COLOR", color = Color.White, fontSize = 12.sp)
+                    Row {
+                        ColorBox(Color.Red) { Config.targetBallColor = android.graphics.Color.RED }
+                        ColorBox(Color.Blue) { Config.targetBallColor = android.graphics.Color.BLUE }
+                        ColorBox(Color.Black) { Config.targetBallColor = android.graphics.Color.BLACK }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Calibration Button (Placeholder for dragging pockets)
+                    Button(
+                        onClick = { /* Launch Pocket Editor */ },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A1A1A)),
+                        border = borderStroke(1.dp, Color(0xFF00FFCC))
+                    ) {
+                        Text("CALIBRATE POCKETS", color = Color(0xFF00FFCC))
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Start/Stop
+                    Button(
+                        onClick = {
+                            ServiceState.showControlPanel.value = false // Hide panel
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC))
+                    ) {
+                        Text("START INJECTION", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Button(
+                        onClick = onClose,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    ) {
+                        Text("TERMINATE", color = Color.White)
+                    }
+                }
+            }
+        }
+
+        @Composable
+        fun ColorBox(color: Color, onClick: () -> Unit) {
+            Box(
+                modifier = Modifier
+                    .padding(4.dp)
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(color)
+                    .border(1.dp, Color.White, RoundedCornerShape(4.dp))
+                    .clickable { onClick() }
+            )
+        }
+
+        @Composable
+        fun borderStroke(width: androidx.compose.ui.unit.Dp, color: Color) = androidx.compose.foundation.BorderStroke(width, color)
+        EOF
+
+        cat << 'EOF' > app/src/main/java/com/pax/injector/service/CaptureService.kt
+        package com.pax.injector.service
         import android.app.*
         import android.content.Intent
         import android.content.pm.ServiceInfo
@@ -372,9 +429,9 @@ jobs:
         import android.util.DisplayMetrics
         import android.view.WindowManager
         import androidx.core.app.NotificationCompat
-        import com.efootball.visionassist.R
-        import com.efootball.visionassist.data.ServiceState
-        import com.efootball.visionassist.vision.VisionPipeline
+        import com.pax.injector.R
+        import com.pax.injector.data.ServiceState
+        import com.pax.injector.vision.VisionPipeline
 
         class CaptureService : Service() {
             private var mediaProjection: MediaProjection? = null
@@ -386,37 +443,20 @@ jobs:
                     val channel = NotificationChannel("v_channel", "Vision", NotificationManager.IMPORTANCE_LOW)
                     (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
                 }
-                
-                val notification = NotificationCompat.Builder(this, "v_channel").setContentTitle("Vision Running").setSmallIcon(R.drawable.ic_vision_hud).build()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-                } else {
-                    startForeground(1, notification)
-                }
+                val notification = NotificationCompat.Builder(this, "v_channel").setContentTitle("PAX-INJECTOR Running").setSmallIcon(R.drawable.ic_vision_hud).build()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+                else startForeground(1, notification)
                 
                 val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
-                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent?.getParcelableExtra("data", Intent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent?.getParcelableExtra("data")
-                }
+                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) intent?.getParcelableExtra("data", Intent::class.java) else @Suppress("DEPRECATION") intent?.getParcelableExtra("data")
                 
                 if (data != null && mediaProjection == null) {
                     try {
                         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                         mediaProjection = manager.getMediaProjection(resultCode, data)
-                        
                         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-                            override fun onStop() {
-                                super.onStop()
-                                virtualDisplay?.release()
-                                imageReader?.close()
-                                mediaProjection = null
-                                ServiceState.isRunning.value = false
-                            }
+                            override fun onStop() { super.onStop(); virtualDisplay?.release(); imageReader?.close(); mediaProjection = null; ServiceState.isRunning.value = false }
                         }, Handler(Looper.getMainLooper()))
-                        
                         setupVirtualDisplay()
                         VisionPipeline.init()
                     } catch (e: Exception) { e.printStackTrace() }
@@ -442,179 +482,145 @@ jobs:
                     image.close()
                 }, null)
             }
-            override fun onDestroy() { 
-                super.onDestroy()
-                virtualDisplay?.release()
-                imageReader?.close()
-                mediaProjection?.stop()
-                ServiceState.isRunning.value = false
-            }
+            override fun onDestroy() { super.onDestroy(); virtualDisplay?.release(); imageReader?.close(); mediaProjection?.stop(); ServiceState.isRunning.value = false }
             override fun onBind(intent: Intent?): IBinder? = null
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/data/Models.kt
-        package com.efootball.visionassist.data
+        cat << 'EOF' > app/src/main/java/com/pax/injector/data/Models.kt
+        package com.pax.injector.data
         data class ScreenPoint(val x: Float, val y: Float) {
             fun distanceTo(o: ScreenPoint): Float = kotlin.math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y))
         }
-        data class PitchPoint(val x: Float, val y: Float) { fun distanceTo(o: PitchPoint): Float = kotlin.math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y)) }
-        enum class PlayerRole { TEAMMATE, OPPONENT }
-        data class DetectedBall(val screenPosition: ScreenPoint)
-        data class DetectedPlayer(val screenPosition: ScreenPoint, val role: PlayerRole = PlayerRole.TEAMMATE)
-        data class PassOption(val target: DetectedPlayer, val score: Float, val laneClearance: Float = 0f)
-        data class OverlayState(val ball: DetectedBall? = null, val players: List<DetectedPlayer> = emptyList(), val opponents: List<DetectedPlayer> = emptyList(), val bestPass: PassOption? = null, val activePlayerCursor: ScreenPoint? = null)
+        data class OverlayState(val cueBall: ScreenPoint? = null, val targetBall: ScreenPoint? = null, val aimPoint: ScreenPoint? = null, val pocketPoint: ScreenPoint? = null)
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/engine/PassEngine.kt
-        package com.efootball.visionassist.engine
-        import com.efootball.visionassist.data.*
-        import kotlin.math.sqrt
-        import kotlin.math.max
-        import kotlin.math.min
+        cat << 'EOF' > app/src/main/java/com/pax/injector/engine/PhysicsEngine.kt
+        package com.pax.injector.engine
+        import com.pax.injector.data.*
+        import kotlin.math.*
 
-        object PassEngine {
-            fun rankPasses(from: ScreenPoint, teammates: List<DetectedPlayer>, opponents: List<DetectedPlayer>): List<PassOption> {
-                if (teammates.isEmpty()) return emptyList()
-                return teammates.mapIndexed { index, mate ->
-                    val laneClearance = getLaneClearance(from, mate.screenPosition, opponents)
-                    val distance = from.distanceTo(mate.screenPosition)
-                    val safetyScore = if (laneClearance < 40f) laneClearance - 100f else laneClearance * 1.5f
-                    val distanceScore = distance * 0.5f
-                    val finalScore = safetyScore + distanceScore
-                    PassOption(target = mate, score = finalScore, laneClearance = laneClearance)
-                }.sortedByDescending { it.score }
-            }
-
-            private fun getLaneClearance(from: ScreenPoint, to: ScreenPoint, opponents: List<DetectedPlayer>): Float {
-                if (opponents.isEmpty()) return 500f
-                var minDist = 500f
-                for (opp in opponents) {
-                    val d = distancePointToSegment(opp.screenPosition, from, to)
-                    if (d < minDist) minDist = d
-                }
-                return minDist
-            }
-
-            private fun distancePointToSegment(p: ScreenPoint, a: ScreenPoint, b: ScreenPoint): Float {
-                val abx = b.x - a.x
-                val aby = b.y - a.y
-                val apx = p.x - a.x
-                val apy = p.y - a.y
-                val ab2 = abx * abx + aby * aby
-                if (ab2 == 0f) return sqrt(apx * apx + apy * apy)
-                var t = (apx * abx + apy * aby) / ab2
-                t = max(0f, min(1f, t))
-                val projX = a.x + abx * t
-                val projY = a.y + aby * t
-                return sqrt((p.x - projX) * (p.x - projX) + (p.y - projY) * (p.y - projY))
+        object PhysicsEngine {
+            fun calculateGhostBall(cue: ScreenPoint, target: ScreenPoint, pocket: ScreenPoint): ScreenPoint {
+                val dx = pocket.x - target.x
+                val dy = pocket.y - target.y
+                val dist = sqrt(dx*dx + dy*dy)
+                val nx = dx / dist
+                val ny = dy / dist
+                val ghostX = target.x - (nx * 30f)
+                val ghostY = target.y - (ny * 30f)
+                return ScreenPoint(ghostX, ghostY)
             }
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/vision/VisionPipeline.kt
-        package com.efootball.visionassist.vision
+        cat << 'EOF' > app/src/main/java/com/pax/injector/vision/VisionPipeline.kt
+        package com.pax.injector.vision
         import android.graphics.Bitmap
         import android.graphics.Color
-        import com.efootball.visionassist.data.*
-        import com.efootball.visionassist.engine.PassEngine
+        import com.pax.injector.data.*
+        import com.pax.injector.engine.PhysicsEngine
         import kotlinx.coroutines.flow.MutableStateFlow
-        import kotlin.math.abs
+        import org.opencv.android.Utils
+        import org.opencv.core.*
+        import org.opencv.imgproc.Imgproc
 
         object VisionPipeline {
             val overlayState = MutableStateFlow(OverlayState())
-            fun init() {}
+            private var isOpenCVLoaded = false
+
+            fun init() {
+                try {
+                    System.loadLibrary("opencv_java4")
+                    isOpenCVLoaded = true
+                } catch (e: Exception) { e.printStackTrace() }
+            }
             
             fun processFrame(bitmap: Bitmap) {
-                val scaled = Bitmap.createScaledBitmap(bitmap, bitmap.width / 4, bitmap.height / 4, false)
-                val width = scaled.width
-                val height = scaled.height
-                val pixels = IntArray(width * height)
-                scaled.getPixels(pixels, 0, width, 0, 0, width, height)
+                if (!isOpenCVLoaded || ServiceState.showControlPanel.value) return
 
-                var ball: DetectedBall? = null
-                var cursor: ScreenPoint? = null
-                val mates = mutableListOf<DetectedPlayer>()
-                val opponents = mutableListOf<DetectedPlayer>()
+                val src = Mat()
+                Utils.bitmapToMat(bitmap, src)
+                
+                val small = Mat()
+                Imgproc.resize(src, small, Size(src.cols() / 2.0, src.rows() / 2.0))
 
-                val minX = (width * 0.05).toInt()
-                val maxX = (width * 0.75).toInt() 
-                val minY = (height * 0.25).toInt() 
-                val maxY = (height * 0.85).toInt()
+                val gray = Mat()
+                Imgproc.cvtColor(small, gray, Imgproc.COLOR_RGBA2GRAY)
+                
+                val circles = Mat()
+                Imgproc.HoughCircles(gray, circles, Imgproc.HOUGH_GRADIENT, 1.0,
+                    (small.rows() / 10).toDouble(), 100.0, 30.0, 10, 30)
 
-                for (y in minY until maxY step 4) {
-                    for (x in minX until maxX step 4) {
-                        val p = pixels[y * width + x]
-                        val r = Color.red(p)
-                        val g = Color.green(p)
-                        val b = Color.blue(p)
+                var cueBall: ScreenPoint? = null
+                var targetBall: ScreenPoint? = null
 
-                        if (r < 100 && g > 180 && b > 180 && cursor == null) {
-                            cursor = ScreenPoint(x * 4f, y * 4f)
-                        }
-                        if (r > 235 && g > 235 && b > 235 && ball == null) {
-                            ball = DetectedBall(ScreenPoint(x * 4f, y * 4f))
-                        }
-                        if (r > 160 && g < 60 && b < 60) {
-                            val pt = ScreenPoint(x * 4f, y * 4f)
-                            if (mates.size < 11 && mates.none { abs(it.screenPosition.x - pt.x) < 100 && abs(it.screenPosition.y - pt.y) < 100 }) {
-                                mates.add(DetectedPlayer(pt, PlayerRole.TEAMMATE))
-                            }
-                        }
-                        if (r < 45 && g < 45 && b < 45) {
-                            val pt = ScreenPoint(x * 4f, y * 4f)
-                            if (opponents.size < 11 && opponents.none { abs(it.screenPosition.x - pt.x) < 100 && abs(it.screenPosition.y - pt.y) < 100 }) {
-                                opponents.add(DetectedPlayer(pt, PlayerRole.OPPONENT))
-                            }
-                        }
+                for (i in 0 until circles.cols()) {
+                    val c = circles.get(0, i)
+                    val x = c[0] * 2f
+                    val y = c[1] * 2f
+                    
+                    val pixel = bitmap.getPixel(x.toInt().coerceIn(0, bitmap.width-1), y.toInt().coerceIn(0, bitmap.height-1))
+                    val r = Color.red(pixel)
+                    val g = Color.green(pixel)
+                    val b = Color.blue(pixel)
+
+                    if (r > 200 && g > 200 && b > 200 && cueBall == null) {
+                        cueBall = ScreenPoint(x, y)
+                    } else if (targetBall == null && (r < 200 || g < 200 || b < 200)) {
+                        targetBall = ScreenPoint(x, y)
                     }
                 }
 
-                var bestPass: PassOption? = null
+                var aimPoint: ScreenPoint? = null
+                var pocketPoint: ScreenPoint? = null
 
-                if (cursor != null && mates.isNotEmpty()) {
-                    val otherMates = mates.filter { it.screenPosition.distanceTo(cursor) > 100f }
-                    bestPass = PassEngine.rankPasses(cursor, otherMates, opponents).firstOrNull()
-                    if (bestPass != null && bestPass.laneClearance < 40f) {
-                        bestPass = PassEngine.rankPasses(cursor, otherMates, opponents).getOrNull(1)
+                if (cueBall != null && targetBall != null) {
+                    // Find nearest pocket from Config
+                    var minDist = Float.MAX_VALUE
+                    for (p in Config.pockets) {
+                        val pPoint = ScreenPoint(bitmap.width * p.x, bitmap.height * p.y)
+                        val d = targetBall.distanceTo(pPoint)
+                        if (d < minDist) {
+                            minDist = d
+                            pocketPoint = pPoint
+                        }
+                    }
+
+                    if (pocketPoint != null) {
+                        aimPoint = PhysicsEngine.calculateGhostBall(cueBall, targetBall, pocketPoint)
                     }
                 }
 
-                overlayState.value = OverlayState(ball, mates, opponents, bestPass, cursor)
+                overlayState.value = OverlayState(cueBall, targetBall, aimPoint, pocketPoint)
+                src.release(); small.release(); gray.release(); circles.release()
             }
         }
         EOF
 
-        cat << 'EOF' > app/src/main/java/com/efootball/visionassist/overlay/PitchOverlayView.kt
-        package com.efootball.visionassist.overlay
+        cat << 'EOF' > app/src/main/java/com/pax/injector/overlay/PitchOverlayView.kt
+        package com.pax.injector.overlay
         import android.content.Context
         import android.graphics.*
         import android.view.View
-        import com.efootball.visionassist.vision.VisionPipeline
+        import com.pax.injector.vision.VisionPipeline
         class PitchOverlayView(context: Context) : View(context) {
             private val ballPaint = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL }
-            
-            // Professional Glowing Pass Line
-            private val passPaint = Paint().apply { 
-                color = Color.GREEN
+            private val targetPaint = Paint().apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 4f }
+            private val aimPaint = Paint().apply { 
+                color = Color.CYAN
                 strokeWidth = 8f
                 style = Paint.Style.STROKE
                 strokeCap = Paint.Cap.ROUND
-                setShadowLayer(15f, 0f, 0f, Color.GREEN) // Glow effect
+                setShadowLayer(15f, 0f, 0f, Color.CYAN)
             }
-            
-            // Target Dot
-            private val targetPaint = Paint().apply {
-                color = Color.GREEN
-                style = Paint.Style.FILL
-                setShadowLayer(10f, 0f, 0f, Color.GREEN)
-            }
+            private val ghostPaint = Paint().apply { color = Color.CYAN; style = Paint.Style.STROKE; strokeWidth = 6f }
             
             private val handler = android.os.Handler(android.os.Looper.getMainLooper())
             private val runnable = object : Runnable { override fun run() { invalidate(); handler.postDelayed(this, 16) } }
             
             init { 
-                setLayerType(LAYER_TYPE_SOFTWARE, null) // Required for shadows
+                setLayerType(LAYER_TYPE_SOFTWARE, null)
                 handler.post(runnable) 
             }
             
@@ -622,17 +628,12 @@ jobs:
                 super.onDraw(canvas)
                 val state = VisionPipeline.overlayState.value
                 
-                state.ball?.let { canvas.drawCircle(it.screenPosition.x, it.screenPosition.y, 15f, ballPaint) }
+                state.cueBall?.let { canvas.drawCircle(it.x, it.y, 15f, ballPaint) }
+                state.targetBall?.let { canvas.drawCircle(it.x, it.y, 15f, targetPaint) }
                 
-                if (state.activePlayerCursor != null && state.bestPass != null) {
-                    val cursor = state.activePlayerCursor
-                    val target = state.bestPass.target.screenPosition
-                    
-                    // Draw Glowing Line
-                    canvas.drawLine(cursor.x, cursor.y, target.x, target.y, passPaint)
-                    
-                    // Draw Target Circle
-                    canvas.drawCircle(target.x, target.y, 20f, targetPaint)
+                if (state.cueBall != null && state.aimPoint != null) {
+                    canvas.drawLine(state.cueBall.x, state.cueBall.y, state.aimPoint.x, state.aimPoint.y, aimPaint)
+                    canvas.drawCircle(state.aimPoint.x, state.aimPoint.y, 15f, ghostPaint)
                 }
             }
         }
@@ -645,5 +646,5 @@ jobs:
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: eFootball-Assist-APK
+        name: PAX-INJECTOR-V2-APK
         path: "**/app/build/outputs/apk/debug/app-debug.apk"
