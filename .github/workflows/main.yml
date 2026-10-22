@@ -128,7 +128,6 @@ jobs:
             var targetBallColor = Color.RED
             var tableColor = Color.GREEN
             
-            // Default pockets (approximate for a centered table)
             var pockets = listOf(
                 ScreenPoint(0.1f, 0.1f), ScreenPoint(0.5f, 0.1f), ScreenPoint(0.9f, 0.1f),
                 ScreenPoint(0.1f, 0.9f), ScreenPoint(0.5f, 0.9f), ScreenPoint(0.9f, 0.9f)
@@ -323,7 +322,7 @@ jobs:
 
         @Composable
         fun ControlPanel(onClose: () -> Unit) {
-            var isRunning by ServiceState.showControlPanel.collectAsState()
+            val isRunning by ServiceState.showControlPanel.collectAsState()
 
             if (!isRunning) return
 
@@ -336,12 +335,10 @@ jobs:
                     .padding(16.dp)
             ) {
                 Column {
-                    // Header
                     Text("PAX-INJECTOR V2", color = Color(0xFF00FFCC), fontSize = 20.sp, fontWeight = FontWeight.Black)
                     Text("SYSTEM READY", color = Color.Magenta, fontSize = 12.sp)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Color Pickers (Simplified for UI)
                     Text("CUE BALL COLOR", color = Color.White, fontSize = 12.sp)
                     Row {
                         ColorBox(Color.White) { Config.cueBallColor = android.graphics.Color.WHITE }
@@ -357,22 +354,20 @@ jobs:
                     }
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Calibration Button (Placeholder for dragging pockets)
                     Button(
-                        onClick = { /* Launch Pocket Editor */ },
+                        onClick = { },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A1A1A)),
-                        border = borderStroke(1.dp, Color(0xFF00FFCC))
+                        border = BorderStroke(1.dp, Color(0xFF00FFCC))
                     ) {
                         Text("CALIBRATE POCKETS", color = Color(0xFF00FFCC))
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Start/Stop
                     Button(
                         onClick = {
-                            ServiceState.showControlPanel.value = false // Hide panel
+                            ServiceState.showControlPanel.value = false
                         },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FFCC))
@@ -405,9 +400,6 @@ jobs:
                     .clickable { onClick() }
             )
         }
-
-        @Composable
-        fun borderStroke(width: androidx.compose.ui.unit.Dp, color: Color) = androidx.compose.foundation.BorderStroke(width, color)
         EOF
 
         cat << 'EOF' > app/src/main/java/com/pax/injector/service/CaptureService.kt
@@ -576,10 +568,9 @@ jobs:
                 var pocketPoint: ScreenPoint? = null
 
                 if (cueBall != null && targetBall != null) {
-                    // Find nearest pocket from Config
                     var minDist = Float.MAX_VALUE
                     for (p in Config.pockets) {
-                        val pPoint = ScreenPoint(bitmap.width * p.x, bitmap.height * p.y)
+                        val pPoint = ScreenPoint((bitmap.width * p.x).toFloat(), (bitmap.height * p.y).toFloat())
                         val d = targetBall.distanceTo(pPoint)
                         if (d < minDist) {
                             minDist = d
